@@ -1,4 +1,18 @@
 services:
+  app-migrate:
+    image: docker.io/codingcoffee/bureaucat:${VERSION:-latest}
+    build:
+      context: ./
+      dockerfile: Dockerfile
+      args:
+        VERSION: ${VERSION:-dev}
+    command: ./bureaucat migrate
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   app:
     image: docker.io/codingcoffee/bureaucat:${VERSION:-latest}
     build:
