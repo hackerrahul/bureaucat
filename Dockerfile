@@ -20,8 +20,16 @@ RUN cp -r migrations/* ./cmd/bureaucat/migrations/
 RUN go build -ldflags "-X main.Version=${VERSION}" -o bureaucat ./cmd/bureaucat
 
 # Runtime
+# FROM debian:bookworm-slim
+# RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+# WORKDIR /app
+# COPY --from=backend /app/bureaucat .
+# EXPOSE 1341
+# CMD ["./bureaucat", "serve", "--migrate"]
+
+# Runtime
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=backend /app/bureaucat .
 EXPOSE 1341
