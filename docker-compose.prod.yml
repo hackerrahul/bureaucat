@@ -15,7 +15,8 @@ services:
         VERSION: ${VERSION:-dev}
     command: ["./bureaucat", "migrate", "up"]
     environment:
-      DATABASE_URL: ${DATABASE_URL:?}
+      # Use ${VAR} (not ${VAR:?}) so Coolify's build-time .env can omit runtime secrets.
+      DATABASE_URL: ${DATABASE_URL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,8 +40,8 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-production}
-      DATABASE_URL: ${DATABASE_URL:?}
-      JWT_SECRET: ${JWT_SECRET:?}
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
       ACCESS_TOKEN_EXPIRY_MINS: ${ACCESS_TOKEN_EXPIRY_MINS:-5}
       REFRESH_TOKEN_EXPIRY_DAYS: ${REFRESH_TOKEN_EXPIRY_DAYS:-7}
       DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-}
@@ -48,8 +49,8 @@ services:
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-10485760}
       S3_ENDPOINT: ${S3_ENDPOINT:-http://garage:3900}
       FILES_BUCKET_NAME: ${FILES_BUCKET_NAME:-bureaucat}
-      FILES_BUCKET_ACCESS_KEY_ID: ${FILES_BUCKET_ACCESS_KEY_ID:?}
-      FILES_BUCKET_SECRET_ACCESS_KEY: ${FILES_BUCKET_SECRET_ACCESS_KEY:?}
+      FILES_BUCKET_ACCESS_KEY_ID: ${FILES_BUCKET_ACCESS_KEY_ID}
+      FILES_BUCKET_SECRET_ACCESS_KEY: ${FILES_BUCKET_SECRET_ACCESS_KEY}
 
   # Writes garage.toml into a named volume from env vars (no host bind mount / no auto-created directory).
   garage-config:
@@ -58,8 +59,8 @@ services:
     volumes:
       - garage-config:/config
     environment:
-      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?}
-      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:?}
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -99,8 +100,8 @@ services:
     environment:
       GARAGE_CONFIG_FILE: /config/garage.toml
       # Same credentials the app uses — Garage creates the bucket/key on first boot.
-      GARAGE_DEFAULT_ACCESS_KEY: ${FILES_BUCKET_ACCESS_KEY_ID:?}
-      GARAGE_DEFAULT_SECRET_KEY: ${FILES_BUCKET_SECRET_ACCESS_KEY:?}
+      GARAGE_DEFAULT_ACCESS_KEY: ${FILES_BUCKET_ACCESS_KEY_ID}
+      GARAGE_DEFAULT_SECRET_KEY: ${FILES_BUCKET_SECRET_ACCESS_KEY}
       GARAGE_DEFAULT_BUCKET: ${FILES_BUCKET_NAME:-bureaucat}
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     healthcheck:
@@ -117,7 +118,7 @@ services:
       - postgres-data:/var/lib/postgresql/18/docker
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-bureaucat}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-bureaucat}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
