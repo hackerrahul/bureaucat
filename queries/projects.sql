@@ -37,6 +37,28 @@ SET workspace_id = $2, updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, project_key, name, description, icon_id, cover_id, created_by, created_at, updated_at, deleted_at, disabled, workspace_id;
 
+-- name: ListProjectMembersMissingFromWorkspace :many
+-- Project members who are NOT members of the given workspace. Used to preview
+-- who would lose visibility of the project when it moves to that workspace.
+SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.avatar_url
+FROM project_members pm
+JOIN users u ON pm.user_id = u.id
+WHERE pm.project_id = $1
+  AND NOT EXISTS (
+    SELECT 1 FROM workspace_members wm
+    WHERE wm.workspace_id = $2 AND wm.user_id = pm.user_id
+  )
+ORDER BY u.first_name ASC, u.last_name ASC;
+
+-- name: AddProjectMembersToWorkspace :exec
+-- Adds every member of the project as a member of the workspace, skipping any
+-- who are already members. Used when moving a project to keep members' access.
+INSERT INTO workspace_members (workspace_id, user_id)
+SELECT $1, pm.user_id
+FROM project_members pm
+WHERE pm.project_id = $2
+ON CONFLICT (workspace_id, user_id) DO NOTHING;
+
 -- name: SoftDeleteProject :exec
 UPDATE projects
 SET deleted_at = NOW(), updated_at = NOW()

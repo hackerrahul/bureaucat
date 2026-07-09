@@ -461,6 +461,91 @@ func (h *ProjectHandler) UpdateProject(c *echo.Context) error {
 // MoveProjectToWorkspaceRequest reassigns a project to a different workspace.
 type MoveProjectToWorkspaceRequest struct {
 	WorkspaceKey string `json:"workspace_key"`
+	// AddMembers, when true, also adds the project's members to the destination
+	// workspace so they keep seeing the project in that workspace's list.
+	AddMembers bool `json:"add_members"`
+}
+
+// MoveProjectImpactResponse previews the effect of moving a project: the members
+// who would lose visibility in the destination workspace because they are not
+// members of it.
+type MoveProjectImpactResponse struct {
+	Members []MoveImpactMember `json:"members"`
+	Count   int                `json:"count"`
+}
+
+// MoveImpactMember is a project member who is not in the destination workspace.
+type MoveImpactMember struct {
+	UserID    uuid.UUID `json:"user_id"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
+	AvatarURL *string   `json:"avatar_url,omitempty"`
+}
+
+// GetMoveProjectImpact returns the members who would lose visibility of the
+// project if it were moved to the given workspace. Global-admin only.
+//
+//	@Summary		Preview project move impact
+//	@Description	Lists project members not in the destination workspace. Admin only.
+//	@Tags			Projects
+//	@Produce		json
+//	@Param			projectKey		path		string	true	"Project key"
+//	@Param			workspace_key	query		string	true	"Destination workspace key"
+//	@Success		200				{object}	MoveProjectImpactResponse
+//	@Failure		400				{object}	ErrorResponse
+//	@Failure		404				{object}	ErrorResponse
+//	@Failure		500				{object}	ErrorResponse
+//	@Security		BearerAuth
+//	@Router			/projects/{projectKey}/workspace/move-impact [get]
+func (h *ProjectHandler) GetMoveProjectImpact(c *echo.Context) error {
+	projectKey := c.Param("projectKey")
+	if projectKey == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "project key is required")
+	}
+
+	workspaceKey := strings.ToUpper(strings.TrimSpace(c.QueryParam("workspace_key")))
+	if workspaceKey == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "workspace_key is required")
+	}
+
+	ctx := c.Request().Context()
+
+	project, err := h.store.GetProjectByKey(ctx, projectKey)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "project not found")
+	}
+
+	workspace, err := h.store.GetWorkspaceByKey(ctx, workspaceKey)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusNotFound, "workspace not found")
+	}
+
+	members, err := h.store.ListProjectMembersMissingFromWorkspace(ctx, store.ListProjectMembersMissingFromWorkspaceParams{
+		ProjectID:   project.ID,
+		WorkspaceID: workspace.ID,
+	})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "failed to compute move impact")
+	}
+
+	resp := MoveProjectImpactResponse{
+		Members: make([]MoveImpactMember, len(members)),
+		Count:   len(members),
+	}
+	for i, m := range members {
+		resp.Members[i] = MoveImpactMember{
+			UserID:    m.ID,
+			Username:  m.Username,
+			Email:     m.Email,
+			FirstName: m.FirstName,
+			LastName:  m.LastName,
+			AvatarURL: textToStringPtr(m.AvatarUrl),
+		}
+	}
+
+	return c.JSON(http.StatusOK, resp)
 }
 
 // MoveProjectToWorkspace reassigns a project to another workspace. Global-admin
@@ -514,6 +599,17 @@ func (h *ProjectHandler) MoveProjectToWorkspace(c *echo.Context) error {
 	})
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to move project")
+	}
+
+	// Optionally add the project's members to the destination workspace so they
+	// keep seeing the project in that workspace's project list.
+	if req.AddMembers {
+		if err := h.store.AddProjectMembersToWorkspace(ctx, store.AddProjectMembersToWorkspaceParams{
+			WorkspaceID: workspace.ID,
+			ProjectID:   project.ID,
+		}); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "project moved but failed to add members to workspace")
+		}
 	}
 
 	return c.JSON(http.StatusOK, ProjectResponse{

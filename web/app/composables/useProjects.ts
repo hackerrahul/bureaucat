@@ -2,6 +2,7 @@ import type {
   Project,
   PaginatedProjectsResponse,
   ProjectMember,
+  MoveImpactMember,
   ProjectState,
   ProjectLabel,
   TaskTemplate,
@@ -170,10 +171,43 @@ export function useProjects() {
     }
   }
 
-  // Reassign a project to a different workspace. Global-admin only on the server.
-  async function moveProjectToWorkspace(
+  // Preview which project members would lose visibility if the project moved to
+  // the given workspace (i.e. members not already in that workspace).
+  // Global-admin only on the server.
+  async function getMoveProjectImpact(
     projectKey: string,
     workspaceKey: string
+  ): Promise<{
+    success: boolean;
+    data?: { members: MoveImpactMember[]; count: number };
+    error?: string;
+  }> {
+    try {
+      const params = new URLSearchParams({ workspace_key: workspaceKey });
+      const response = await fetch(
+        `/api/v1/projects/${projectKey}/workspace/move-impact?${params}`,
+        { headers: getAuthHeader() }
+      );
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        return { success: false, error: error.message || "Failed to load move impact" };
+      }
+
+      const data = await response.json();
+      return { success: true, data };
+    } catch {
+      return { success: false, error: "Network error" };
+    }
+  }
+
+  // Reassign a project to a different workspace. Global-admin only on the server.
+  // When addMembers is true, the project's members are also added to the
+  // destination workspace so they keep seeing the project.
+  async function moveProjectToWorkspace(
+    projectKey: string,
+    workspaceKey: string,
+    addMembers = false
   ): Promise<{ success: boolean; data?: Project; error?: string }> {
     try {
       const response = await fetch(`/api/v1/projects/${projectKey}/workspace`, {
@@ -182,7 +216,7 @@ export function useProjects() {
           "Content-Type": "application/json",
           ...getAuthHeader(),
         },
-        body: JSON.stringify({ workspace_key: workspaceKey }),
+        body: JSON.stringify({ workspace_key: workspaceKey, add_members: addMembers }),
       });
 
       if (!response.ok) {
@@ -191,8 +225,11 @@ export function useProjects() {
       }
 
       const project: Project = await response.json();
+      // Merge rather than replace: the move response omits fields like `role`
+      // (it's computed per-request), and clobbering them would drop the caller's
+      // project role and, e.g., hide the admin-only settings tab.
       if (state.currentProject?.project_key === projectKey) {
-        state.currentProject = project;
+        state.currentProject = { ...state.currentProject, ...project };
       }
       return { success: true, data: project };
     } catch {
@@ -694,6 +731,7 @@ export function useProjects() {
     createProject,
     getProject,
     updateProject,
+    getMoveProjectImpact,
     moveProjectToWorkspace,
     setProjectDisabled,
     deleteProject,

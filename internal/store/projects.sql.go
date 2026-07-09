@@ -39,6 +39,26 @@ func (q *Queries) AddProjectMember(ctx context.Context, arg AddProjectMemberPara
 	return i, err
 }
 
+const addProjectMembersToWorkspace = `-- name: AddProjectMembersToWorkspace :exec
+INSERT INTO workspace_members (workspace_id, user_id)
+SELECT $1, pm.user_id
+FROM project_members pm
+WHERE pm.project_id = $2
+ON CONFLICT (workspace_id, user_id) DO NOTHING
+`
+
+type AddProjectMembersToWorkspaceParams struct {
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+	ProjectID   uuid.UUID `json:"project_id"`
+}
+
+// Adds every member of the project as a member of the workspace, skipping any
+// who are already members. Used when moving a project to keep members' access.
+func (q *Queries) AddProjectMembersToWorkspace(ctx context.Context, arg AddProjectMembersToWorkspaceParams) error {
+	_, err := q.db.Exec(ctx, addProjectMembersToWorkspace, arg.WorkspaceID, arg.ProjectID)
+	return err
+}
+
 const addTaskAssignee = `-- name: AddTaskAssignee :one
 
 INSERT INTO task_assignees (task_id, user_id, assigned_by)
@@ -1431,6 +1451,61 @@ func (q *Queries) ListProjectMembers(ctx context.Context, projectID uuid.UUID) (
 			&i.UserID,
 			&i.Role,
 			&i.JoinedAt,
+			&i.Username,
+			&i.Email,
+			&i.FirstName,
+			&i.LastName,
+			&i.AvatarUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectMembersMissingFromWorkspace = `-- name: ListProjectMembersMissingFromWorkspace :many
+SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.avatar_url
+FROM project_members pm
+JOIN users u ON pm.user_id = u.id
+WHERE pm.project_id = $1
+  AND NOT EXISTS (
+    SELECT 1 FROM workspace_members wm
+    WHERE wm.workspace_id = $2 AND wm.user_id = pm.user_id
+  )
+ORDER BY u.first_name ASC, u.last_name ASC
+`
+
+type ListProjectMembersMissingFromWorkspaceParams struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+}
+
+type ListProjectMembersMissingFromWorkspaceRow struct {
+	ID        uuid.UUID   `json:"id"`
+	Username  string      `json:"username"`
+	Email     string      `json:"email"`
+	FirstName string      `json:"first_name"`
+	LastName  string      `json:"last_name"`
+	AvatarUrl pgtype.Text `json:"avatar_url"`
+}
+
+// Project members who are NOT members of the given workspace. Used to preview
+// who would lose visibility of the project when it moves to that workspace.
+func (q *Queries) ListProjectMembersMissingFromWorkspace(ctx context.Context, arg ListProjectMembersMissingFromWorkspaceParams) ([]ListProjectMembersMissingFromWorkspaceRow, error) {
+	rows, err := q.db.Query(ctx, listProjectMembersMissingFromWorkspace, arg.ProjectID, arg.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListProjectMembersMissingFromWorkspaceRow{}
+	for rows.Next() {
+		var i ListProjectMembersMissingFromWorkspaceRow
+		if err := rows.Scan(
+			&i.ID,
 			&i.Username,
 			&i.Email,
 			&i.FirstName,

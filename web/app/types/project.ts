@@ -33,6 +33,17 @@ export interface ProjectMember {
   joined_at: string;
 }
 
+// A project member who is not a member of a given destination workspace.
+// Returned by the move-project impact preview.
+export interface MoveImpactMember {
+  user_id: string;
+  username: string;
+  email: string;
+  first_name: string;
+  last_name: string;
+  avatar_url?: string;
+}
+
 export interface ProjectState {
   id: string;
   state_type: StateType;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Loader2 } from "lucide-vue-next";
 import { toast } from "vue-sonner";
-import type { Project } from "~/types";
+import type { Project, MoveImpactMember } from "~/types";
 
 const props = defineProps<{
   project: Project;
@@ -12,7 +12,8 @@ const emit = defineEmits<{
   refresh: [];
 }>();
 
-const { updateProject, moveProjectToWorkspace, setProjectDisabled } = useProjects();
+const { updateProject, getMoveProjectImpact, moveProjectToWorkspace, setProjectDisabled } =
+  useProjects();
 const { user } = useAuth();
 const { workspaces, listWorkspaces } = useWorkspaces();
 
@@ -46,16 +47,62 @@ onMounted(() => {
   if (workspaces.value.length === 0) listWorkspaces();
 });
 
-async function handleMoveWorkspace() {
-  const target = workspaces.value.find((w) => w.id === selectedWorkspaceId.value);
-  if (!target || !workspaceChanged.value) return;
+// Move confirmation dialog state. Opening the dialog previews which members
+// would lose visibility of the project in the destination workspace.
+const showMoveDialog = ref(false);
+const loadingImpact = ref(false);
+const impactMembers = ref<MoveImpactMember[]>([]);
+const addMembers = ref(true);
+
+// The workspace selected in the <select>, resolved to a full object.
+const pendingTarget = computed(() =>
+  workspaces.value.find((w) => w.id === selectedWorkspaceId.value) ?? null
+);
+
+async function openMoveDialog() {
+  if (!pendingTarget.value || !workspaceChanged.value) return;
+
+  showMoveDialog.value = true;
+  loadingImpact.value = true;
+  impactMembers.value = [];
+  addMembers.value = true;
+
+  const result = await getMoveProjectImpact(
+    props.project.project_key,
+    pendingTarget.value.workspace_key
+  );
+  loadingImpact.value = false;
+
+  if (result.success && result.data) {
+    impactMembers.value = result.data.members;
+  } else {
+    toast.error(result.error || "Failed to load move impact");
+  }
+}
+
+async function confirmMove() {
+  const target = pendingTarget.value;
+  if (!target) return;
+
+  // Only pass the flag when there are members to add and the admin opted in.
+  const shouldAddMembers = impactMembers.value.length > 0 && addMembers.value;
 
   movingWorkspace.value = true;
-  const result = await moveProjectToWorkspace(props.project.project_key, target.workspace_key);
+  const result = await moveProjectToWorkspace(
+    props.project.project_key,
+    target.workspace_key,
+    shouldAddMembers
+  );
   movingWorkspace.value = false;
+  showMoveDialog.value = false;
 
   if (result.success) {
-    toast.success(`Moved to "${target.name}"`);
+    const added = shouldAddMembers ? impactMembers.value.length : 0;
+    toast.success(
+      added > 0
+        ? `Moved to "${target.name}" and added ${added} member${added === 1 ? "" : "s"}`
+        : `Moved to "${target.name}"`
+    );
     emit("refresh");
   } else {
     selectedWorkspaceId.value = props.project.workspace_id;
@@ -201,9 +248,8 @@ const hasChanges = computed(() => {
                 <Button
                   variant="outline"
                   :disabled="!workspaceChanged || movingWorkspace"
-                  @click="handleMoveWorkspace"
+                  @click="openMoveDialog"
                 >
-                  <Loader2 v-if="movingWorkspace" class="mr-2 size-4 animate-spin" />
                   Move
                 </Button>
               </div>
@@ -213,6 +259,72 @@ const hasChanges = computed(() => {
                 won't see it in that workspace's project list.
               </p>
             </div>
+
+            <!-- Move confirmation with visibility-impact preview -->
+            <Dialog v-model:open="showMoveDialog">
+              <DialogContent class="max-h-[85vh] overflow-y-auto sm:max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Move to "{{ pendingTarget?.name }}"</DialogTitle>
+                  <DialogDescription>
+                    Project membership and roles are unchanged by the move.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div class="space-y-4 py-2">
+                  <div v-if="loadingImpact" class="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 class="size-4 animate-spin" />
+                    Checking who's affected…
+                  </div>
+
+                  <template v-else>
+                    <p v-if="impactMembers.length === 0" class="text-sm text-muted-foreground">
+                      All project members are already in this workspace. Nothing else
+                      changes.
+                    </p>
+
+                    <template v-else>
+                      <p class="text-sm">
+                        <span class="font-medium">{{ impactMembers.length }}</span>
+                        member{{ impactMembers.length === 1 ? "" : "s" }} aren't in
+                        "{{ pendingTarget?.name }}" and would lose sight of this project
+                        in that workspace's list.
+                      </p>
+
+                      <div class="max-h-48 overflow-y-auto rounded-md border">
+                        <ul class="divide-y">
+                          <li
+                            v-for="m in impactMembers"
+                            :key="m.user_id"
+                            class="px-3 py-2 text-sm"
+                          >
+                            <span class="font-medium">{{ m.first_name }} {{ m.last_name }}</span>
+                            <span class="break-all text-muted-foreground"> · {{ m.email }}</span>
+                          </li>
+                        </ul>
+                      </div>
+
+                      <label class="flex items-start gap-2 text-sm">
+                        <Checkbox v-model="addMembers" class="mt-0.5" />
+                        <span>
+                          Also add {{ impactMembers.length === 1 ? "this member" : "these members" }}
+                          to "{{ pendingTarget?.name }}" so they keep access.
+                        </span>
+                      </label>
+                    </template>
+                  </template>
+                </div>
+
+                <DialogFooter>
+                  <Button variant="outline" :disabled="movingWorkspace" @click="showMoveDialog = false">
+                    Cancel
+                  </Button>
+                  <Button :disabled="movingWorkspace || loadingImpact" @click="confirmMove">
+                    <Loader2 v-if="movingWorkspace" class="mr-2 size-4 animate-spin" />
+                    Move project
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </template>
           <template v-else>
             <div class="flex items-center justify-between gap-4">

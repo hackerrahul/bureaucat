@@ -19,6 +19,9 @@ type Querier interface {
 	AddModuleTasksBulk(ctx context.Context, arg AddModuleTasksBulkParams) error
 	// ==================== PROJECT MEMBERS ====================
 	AddProjectMember(ctx context.Context, arg AddProjectMemberParams) (ProjectMember, error)
+	// Adds every member of the project as a member of the workspace, skipping any
+	// who are already members. Used when moving a project to keep members' access.
+	AddProjectMembersToWorkspace(ctx context.Context, arg AddProjectMembersToWorkspaceParams) error
 	// ==================== TASK ASSIGNEES ====================
 	AddTaskAssignee(ctx context.Context, arg AddTaskAssigneeParams) (TaskAssignee, error)
 	// ==================== TASK LABELS ====================
@@ -189,6 +192,9 @@ type Querier interface {
 	ListProjectCyclesAll(ctx context.Context, projectID uuid.UUID) ([]ListProjectCyclesAllRow, error)
 	ListProjectLabels(ctx context.Context, projectID uuid.UUID) ([]ProjectLabel, error)
 	ListProjectMembers(ctx context.Context, projectID uuid.UUID) ([]ListProjectMembersRow, error)
+	// Project members who are NOT members of the given workspace. Used to preview
+	// who would lose visibility of the project when it moves to that workspace.
+	ListProjectMembersMissingFromWorkspace(ctx context.Context, arg ListProjectMembersMissingFromWorkspaceParams) ([]ListProjectMembersMissingFromWorkspaceRow, error)
 	ListProjectModules(ctx context.Context, arg ListProjectModulesParams) ([]ListProjectModulesRow, error)
 	// Optional case-insensitive search over the title and the page's visible text
 	// (HTML tags stripped from content so markup/attributes don't produce matches).
