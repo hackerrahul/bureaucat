@@ -6,21 +6,8 @@
 #   echo "GK$(openssl rand -hex 16)"  # FILES_BUCKET_ACCESS_KEY_ID
 
 services:
-  app-migrate:
-    image: docker.io/codingcoffee/bureaucat:${VERSION:-latest}
-    build:
-      context: ./
-      dockerfile: Dockerfile
-      args:
-        VERSION: ${VERSION:-dev}
-    command: ["./bureaucat", "migrate", "up"]
-    environment:
-      # Use ${VAR} (not ${VAR:?}) so Coolify's build-time .env can omit runtime secrets.
-      DATABASE_URL: ${DATABASE_URL}
-    depends_on:
-      postgres:
-        condition: service_healthy
-
+  # Migrations run via Dockerfile CMD: ./bureaucat serve --migrate
+  # (no separate one-shot migrate service — Coolify restarts those and hangs depends_on)
   app:
     image: docker.io/codingcoffee/bureaucat:${VERSION:-latest}
     build:
@@ -34,8 +21,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      app-migrate:
-        condition: service_completed_successfully
       garage:
         condition: service_healthy
     environment:
