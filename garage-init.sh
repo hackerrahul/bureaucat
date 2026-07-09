@@ -1,4 +1,7 @@
 #!/bin/sh
+# Local/dev helper for docker-compose.yml (Garage v2.2 + host garage.toml).
+# Production/Coolify (docker-compose.prod.yml) uses Garage v2.3
+# --single-node --default-bucket instead — no need to run this script there.
 set -e
 
 GARAGE_ADMIN_TOKEN=$(cat ./garage/garage.toml| grep admin_token | awk -F" " '{print $NF}' | tr -d '"')

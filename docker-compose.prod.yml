@@ -1,3 +1,10 @@
+# Production / Coolify compose.
+# Coolify picks up every ${VAR} below into the Environment Variables UI.
+# Generate secrets once and paste them into Coolify (or a local .env):
+#   openssl rand -hex 32          # JWT_SECRET, GARAGE_RPC_SECRET, FILES_BUCKET_SECRET_ACCESS_KEY
+#   openssl rand -base64 32       # GARAGE_ADMIN_TOKEN
+#   echo "GK$(openssl rand -hex 16)"  # FILES_BUCKET_ACCESS_KEY_ID
+
 services:
   app-migrate:
     image: docker.io/codingcoffee/bureaucat:${VERSION:-latest}
@@ -6,9 +13,9 @@ services:
       dockerfile: Dockerfile
       args:
         VERSION: ${VERSION:-dev}
-    command: ./bureaucat migrate
-    env_file:
-      - .env
+    command: ["./bureaucat", "migrate", "up"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?}
     depends_on:
       postgres:
         condition: service_healthy
@@ -22,39 +29,104 @@ services:
         VERSION: ${VERSION:-dev}
     restart: unless-stopped
     ports:
-      - 1341:1341
+      - "${APP_PORT:-1341}:1341"
     depends_on:
       postgres:
         condition: service_healthy
       app-migrate:
         condition: service_completed_successfully
-    env_file:
-      - .env
+      garage:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: ${DATABASE_URL:?}
+      JWT_SECRET: ${JWT_SECRET:?}
+      ACCESS_TOKEN_EXPIRY_MINS: ${ACCESS_TOKEN_EXPIRY_MINS:-5}
+      REFRESH_TOKEN_EXPIRY_DAYS: ${REFRESH_TOKEN_EXPIRY_DAYS:-7}
+      DEMO_USER_EMAIL: ${DEMO_USER_EMAIL:-}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-}
+      MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-10485760}
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://garage:3900}
+      FILES_BUCKET_NAME: ${FILES_BUCKET_NAME:-bureaucat}
+      FILES_BUCKET_ACCESS_KEY_ID: ${FILES_BUCKET_ACCESS_KEY_ID:?}
+      FILES_BUCKET_SECRET_ACCESS_KEY: ${FILES_BUCKET_SECRET_ACCESS_KEY:?}
+
+  # Writes garage.toml into a named volume from env vars (no host bind mount / no auto-created directory).
+  garage-config:
+    image: alpine:3.21
+    restart: "no"
+    volumes:
+      - garage-config:/config
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:?}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:?}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        cat > /config/garage.toml <<EOF
+        metadata_dir = "/var/lib/garage/meta"
+        data_dir = "/var/lib/garage/data"
+        db_engine = "sqlite"
+        replication_factor = 1
+        rpc_bind_addr = "[::]:3901"
+        rpc_public_addr = "127.0.0.1:3901"
+        rpc_secret = "$${GARAGE_RPC_SECRET}"
+        [s3_api]
+        s3_region = "garage"
+        api_bind_addr = "[::]:3900"
+        root_domain = ".s3.garage.localhost"
+        [s3_web]
+        bind_addr = "[::]:3902"
+        root_domain = ".web.garage.localhost"
+        index = "index.html"
+        [admin]
+        api_bind_addr = "[::]:3903"
+        admin_token = "$${GARAGE_ADMIN_TOKEN}"
+        EOF
+        echo "Wrote /config/garage.toml"
 
   garage:
-    image: dxflrs/garage:v2.2.0
+    image: dxflrs/garage:v2.3.0
     restart: unless-stopped
-    container_name: bureaucat-garage
+    depends_on:
+      garage-config:
+        condition: service_completed_successfully
     volumes:
-      - ./garage/garage.toml:/etc/garage.toml
-      - ./garage/meta:/var/lib/garage/meta
-      - ./garage/data:/var/lib/garage/data
+      - garage-config:/config:ro
+      - garage-meta:/var/lib/garage/meta
+      - garage-data:/var/lib/garage/data
+    environment:
+      GARAGE_CONFIG_FILE: /config/garage.toml
+      # Same credentials the app uses — Garage creates the bucket/key on first boot.
+      GARAGE_DEFAULT_ACCESS_KEY: ${FILES_BUCKET_ACCESS_KEY_ID:?}
+      GARAGE_DEFAULT_SECRET_KEY: ${FILES_BUCKET_SECRET_ACCESS_KEY:?}
+      GARAGE_DEFAULT_BUCKET: ${FILES_BUCKET_NAME:-bureaucat}
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
     healthcheck:
       test: ["CMD", "/garage", "status"]
-      interval: 30s
+      interval: 10s
       timeout: 5s
-      retries: 3
-      start_period: 10s
+      retries: 12
+      start_period: 20s
 
   postgres:
     image: postgres:18.1-alpine3.23
     restart: unless-stopped
     volumes:
-      - ./postgres-data:/var/lib/postgresql/18/docker
-    env_file:
-      - .postgres.env
+      - postgres-data:/var/lib/postgresql/18/docker
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bureaucat}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-bureaucat}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 10s
       timeout: 5s
       retries: 5
+
+volumes:
+  postgres-data:
+  garage-config:
+  garage-meta:
+  garage-data:
